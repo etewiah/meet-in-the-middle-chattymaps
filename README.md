@@ -29,9 +29,15 @@ You need Node 20 or later. There are no dependencies.
 ```bash
 git clone https://github.com/etewiah/meet-in-the-middle-chattymaps.git
 cd meet-in-the-middle-chattymaps
-npm link          # puts `middle` on your PATH
-# or, without linking (add --preview to test without creating a poll):
+npm link          # puts `middle` and `middle-with-me` on your PATH
+middle "Brixton" "Camden" --preview
+```
+
+Or run without linking:
+
+```bash
 node bin/middle.js "Brixton" "Camden" --preview
+node bin/middle-with-me.js "Camden" pubs --preview
 ```
 
 ## Examples
@@ -39,6 +45,10 @@ node bin/middle.js "Brixton" "Camden" --preview
 ```bash
 # Try it without creating a poll (on a Mac, stays completely offline from ChattyMaps)
 middle "Clapham" "Walthamstow" pubs --preview
+
+# Meet halfway between where you are right now and someone else (macOS)
+middle-with-me "Walthamstow" pubs --preview
+middle-with-me "Camden" "Brixton" --what=bars
 
 # Three or more people — use --what so the last place isn't read as the venue type
 middle "Brixton" "Camden" "Hackney" --what="pubs with a garden"
@@ -65,6 +75,7 @@ middle "Clapham" "Walthamstow" pubs --preview --json | jq '.candidates[].name'
 
 ```
 middle <place> <place> [more places…] [what] [options]
+middle-with-me <place> [more places…] [what] [options]
 ```
 
 - With **three or more** words, the last is what to look for:
@@ -75,8 +86,15 @@ middle <place> <place> [more places…] [what] [options]
   `middle Brixton Camden Hackney` will search for `"Hackney"` between Brixton
   and Camden:
   `middle Brixton Camden Hackney --what=bars`
+- `middle-with-me` (macOS) uses your Mac's current location via CoreLocation as
+  the first starting place, so you only pass the other places:
+  `middle-with-me Camden` (cafés), `middle-with-me Camden pubs`, or
+  `middle-with-me Camden Brixton --what=bars`. On first run, macOS will prompt
+  you to allow Location Services for your terminal (Wi-Fi must be on). Your
+  location stays on your Mac unless you pass `--source=chattymaps`.
 
-Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8.
+Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8
+(7 other places with `middle-with-me`).
 
 | Option | |
 |---|---|
@@ -144,8 +162,8 @@ The API contract is in the ChattyMaps repo, in `docs/MIDDLE_API.md`.
 - The middle is a straight line, not travel time.
 - A poll created here has no organiser controls in the browser yet. People
   can vote, add places and comment, but nobody can close it.
-- The CLI can't read your device location for "between me and X". Pass your
-  coordinates as `"lat,lng"` instead.
+- `middle-with-me` reads your current location via macOS CoreLocation only.
+  Elsewhere, use `middle` and pass your coordinates as `"lat,lng"`.
 
 ## Credit
 

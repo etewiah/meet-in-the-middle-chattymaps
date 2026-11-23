@@ -4,7 +4,8 @@
   "description": "Find places to meet in the middle, then let the group vote on ChattyMaps",
   "type": "module",
   "bin": {
-    "middle": "bin/middle.js"
+    "middle": "bin/middle.js",
+    "middle-with-me": "bin/middle-with-me.js"
   },
   "files": [
     "bin",

@@ -49,9 +49,9 @@ export async function helperPath({ env = process.env, log = () => {} } = {}) {
   return binary;
 }
 
-async function call(binary, args) {
+async function call(binary, args, timeout = 30_000) {
   try {
-    const { stdout } = await run(binary, args, { timeout: 30_000 });
+    const { stdout } = await run(binary, args, { timeout });
     return JSON.parse(stdout);
   } catch (error) {
     let message = error.message;
@@ -60,7 +60,7 @@ async function call(binary, args) {
   }
 }
 
-/** { geocode, search, reverse } backed by Apple Maps. */
+/** { geocode, search, reverse, locate } backed by Apple Maps & CoreLocation. */
 export async function appleMaps(options) {
   const binary = await helperPath(options);
   return {
@@ -70,5 +70,7 @@ export async function appleMaps(options) {
     search: (query, center, radiusM) => call(binary, ['search', query, String(center.lat), String(center.lng), String(radiusM)]),
     /** → { label, regionLabel, countryCode } or null */
     reverse: (point) => call(binary, ['reverse', String(point.lat), String(point.lng)]),
+    /** → { lat, lng, accuracyM } */
+    locate: () => call(binary, ['locate'], 40_000),
   };
 }

@@ -5,6 +5,7 @@
 //   mapkit-helper geocode <text> [countryCode]
 //   mapkit-helper search <query> <lat> <lng> <radiusM>
 //   mapkit-helper reverse <lat> <lng>
+//   mapkit-helper locate
 //
 // Prints one JSON value on stdout. On failure prints {"error": "..."} and exits 1.
 import CoreLocation
@@ -23,12 +24,81 @@ func fail(_ message: String) -> Never {
 }
 
 /// Runs the main run loop until `done` or the timeout, so completion handlers fire.
-func wait(seconds: Double = 20, _ done: () -> Bool) {
+func wait(seconds: Double = 20, timeoutMessage: String = "Apple Maps did not answer in time", _ done: () -> Bool) {
   let until = Date().addingTimeInterval(seconds)
   while !done() && Date() < until {
     RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
   }
-  if !done() { fail("Apple Maps did not answer in time") }
+  if !done() { fail(timeoutMessage) }
+}
+
+final class LocationDelegate: NSObject, CLLocationManagerDelegate {
+  var coordinate: CLLocationCoordinate2D?
+  var accuracy: CLLocationAccuracy?
+  var errorMessage: String?
+  var finished = false
+  private let manager: CLLocationManager
+
+  init(_ manager: CLLocationManager) {
+    self.manager = manager
+    super.init()
+    manager.delegate = self
+    manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+  }
+
+  func start() {
+    if !CLLocationManager.locationServicesEnabled() {
+      errorMessage = "Location Services is turned off. Turn it on in System Settings → Privacy & Security → Location Services."
+      finished = true
+      return
+    }
+    let status = manager.authorizationStatus
+    if status == .denied || status == .restricted {
+      errorMessage = "Location Services access is denied. Enable it for your terminal in System Settings → Privacy & Security → Location Services."
+      finished = true
+      return
+    }
+    if status == .notDetermined {
+      manager.requestWhenInUseAuthorization()
+    }
+    manager.startUpdatingLocation()
+  }
+
+  func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    let status = manager.authorizationStatus
+    if status == .denied || status == .restricted {
+      errorMessage = "Location Services access was denied. Enable it for your terminal in System Settings → Privacy & Security → Location Services."
+      finished = true
+    } else if status == .authorizedAlways {
+      manager.startUpdatingLocation()
+    }
+  }
+
+  func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    guard let latest = locations.last else { return }
+    coordinate = latest.coordinate
+    accuracy = latest.horizontalAccuracy
+    manager.stopUpdatingLocation()
+    finished = true
+  }
+
+  func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    if let clError = error as? CLError {
+      switch clError.code {
+      case .denied:
+        errorMessage = "Location Services access was denied. Enable it for your terminal in System Settings → Privacy & Security → Location Services."
+        finished = true
+      case .locationUnknown:
+        return
+      default:
+        errorMessage = "Couldn't get your current location (CoreLocation error \(clError.code.rawValue)). Make sure Wi-Fi and Location Services are on."
+        finished = true
+      }
+    } else {
+      errorMessage = "Couldn't get your current location: \(error.localizedDescription)"
+      finished = true
+    }
+  }
 }
 
 func number(_ text: String, _ name: String) -> Double {
@@ -55,7 +125,7 @@ func categoryName(_ category: MKPointOfInterestCategory?) -> String? {
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let command = args.first else { fail("usage: mapkit-helper geocode|search|reverse …") }
+guard let command = args.first else { fail("usage: mapkit-helper geocode|search|reverse|locate …") }
 let geocoder = CLGeocoder()
 var finished = false
 
@@ -135,6 +205,20 @@ case "reverse":
   }
   wait { finished }
   emit(result ?? NSNull())
+
+case "locate":
+  let manager = CLLocationManager()
+  let delegate = LocationDelegate(manager)
+  delegate.start()
+  wait(
+    seconds: 30,
+    timeoutMessage: "Timed out waiting for your current location. Make sure Wi-Fi is on and allow Location Services for your terminal in System Settings → Privacy & Security → Location Services."
+  ) { delegate.finished }
+  if let message = delegate.errorMessage { fail(message) }
+  guard let c = delegate.coordinate else { fail("Couldn't get your current location.") }
+  var payload: [String: Any] = ["lat": c.latitude, "lng": c.longitude]
+  if let accuracy = delegate.accuracy { payload["accuracyM"] = accuracy }
+  emit(payload)
 
 default:
   fail("unknown command \(command)")

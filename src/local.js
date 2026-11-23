@@ -64,15 +64,15 @@ export function rank(places, middle, starts, radiusM, count) {
 }
 
 /** body is the parsed CLI request ({ from, what, count, radiusM, country }); maps is from apple.js. */
-export async function findMiddleLocally(body, maps) {
+export async function findMiddleLocally(body, maps, { me = null } = {}) {
   const what = body.what ?? 'cafés';
   const count = body.count ?? 5;
   const radiusM = body.radiusM ?? 1000;
   if (count < 2 || count > 10) throw new LocalSearchError('--count must be from 2 to 10');
   if (radiusM < 100 || radiusM > MAX_RADIUS_M) throw new LocalSearchError('--radius must be from 100 to 5000 metres');
-  if (body.from.length > 8) throw new LocalSearchError('Give at most 8 starting places.');
+  if (body.from.length + (me ? 1 : 0) > 8) throw new LocalSearchError('Give at most 8 starting places.');
 
-  const starts = [];
+  const starts = me ? [{ name: me.name ?? 'you', lat: me.lat, lng: me.lng }] : [];
   for (const [index, text] of body.from.entries()) {
     const coordinates = COORDINATES.exec(text);
     if (coordinates) {

@@ -104,6 +104,7 @@ function fakeApple(places) {
     geocode: async (text) => { calls.push(['geocode', text]); return { Clapham: { name: 'Clapham, London', lat: 51.4618, lng: -0.1384, countryCode: 'gb' }, Walthamstow: { name: 'Walthamstow, London', lat: 51.5839, lng: -0.02, countryCode: 'gb' } }[text] ?? null; },
     reverse: async () => { calls.push(['reverse']); return { label: 'Hoxton', regionLabel: 'London', countryCode: 'gb' }; },
     search: async (query, center, radius) => { calls.push(['search', query, radius]); return places; },
+    locate: async () => { calls.push(['locate']); return { lat: 51.4618, lng: -0.1384, accuracyM: 35 }; },
   };
   return { calls, apple: { available: async () => true, open: async () => maps } };
 }
@@ -155,4 +156,51 @@ test('--source=chattymaps skips Apple Maps', async () => {
   const streams = io(async (url, init) => { posted = JSON.parse(init.body); return Response.json(response, { status: 201 }); }, apple);
   assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--source=chattymaps'], streams), 0);
   assert.deepEqual(posted.from, ['Clapham', 'Walthamstow']);
+});
+
+test('middle-with-me positional parsing', () => {
+  assert.deepEqual(parseCli(['Camden'], env, { withMe: true }).body, { from: ['Camden'] });
+  const two = parseCli(['Camden', 'pubs'], env, { withMe: true });
+  assert.deepEqual(two.body, { from: ['Camden'], what: 'pubs' });
+  assert.equal(two.whatFromPosition, true);
+  assert.deepEqual(parseCli(['Camden', 'Brixton', '--what=bars'], env, { withMe: true }).body, { from: ['Camden', 'Brixton'], what: 'bars' });
+  assert.throws(() => parseCli([], env, { withMe: true }), UsageError);
+});
+
+test('middle-with-me uses current location locally and never sends it to ChattyMaps', async () => {
+  const { calls, apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  let sent;
+  const streams = io(async (url, init) => { sent = JSON.parse(init.body); return Response.json({ id: 'p2', url: 'https://chattymaps.test/poll/p2' }, { status: 201 }); }, apple);
+  assert.equal(await main(['Walthamstow', 'pubs', '--count=2'], streams, { withMe: true }), 0);
+  assert.deepEqual(calls.filter(([c]) => c === 'locate' || c === 'geocode'), [['locate'], ['geocode', 'Walthamstow']]);
+  assert.match(streams.output.join(''), /from you · .* from Walthamstow/);
+  assert.doesNotMatch(JSON.stringify(sent), /51\.4618|Walthamstow|you/);
+});
+
+test('middle-with-me with --source=chattymaps locates on Mac and sends coordinates', async () => {
+  const { calls, apple } = fakeApple([]);
+  let posted;
+  const streams = io(async (url, init) => { posted = JSON.parse(init.body); return Response.json(response, { status: 201 }); }, apple);
+  assert.equal(await main(['Walthamstow', 'pubs', '--source=chattymaps'], streams, { withMe: true }), 0);
+  assert.deepEqual(calls, [['locate']]);
+  assert.deepEqual(posted.from, ['51.461800,-0.138400', 'Walthamstow']);
+});
+
+test('middle-with-me explains when Apple Maps / CoreLocation is unavailable', async () => {
+  const streams = io(async () => { throw new Error('should not post'); }, noApple);
+  assert.equal(await main(['Camden', 'pubs'], streams, { withMe: true }), 1);
+  assert.match(streams.errors.join(''), /needs macOS.*lat,lng/);
+});
+
+test('middle-with-me caps total starting places at 8 including you', async () => {
+  const { apple } = fakeApple([]);
+  const streams = io(async () => { throw new Error('should not post'); }, apple);
+  assert.equal(await main(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', '--what=pubs'], streams, { withMe: true }), 1);
+  assert.match(streams.errors.join(''), /at most 8 starting places/);
+});
+
+test('middle-with-me --help prints middle-with-me usage', async () => {
+  const streams = io(async () => { throw new Error('unused'); });
+  assert.equal(await main(['--help'], streams, { withMe: true }), 0);
+  assert.match(streams.output.join(''), /^middle-with-me —/);
 });
