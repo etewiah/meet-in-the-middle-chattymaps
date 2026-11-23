@@ -1,7 +1,9 @@
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
+import { appleMaps, appleMapsAvailable, AppleMapsError } from './apple.js';
+import { findMiddleLocally, LocalSearchError, placesRequest } from './local.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 export const DEFAULT_BASE_URL = 'https://chattymaps.etewiah.workers.dev';
 const TIMEOUT_MS = 90_000;
 
@@ -19,9 +21,13 @@ Usage:
     middle Clapham Walthamstow Brixton --what=bars
   Starting places can be towns, stations, postcodes or "lat,lng".
 
+On a Mac, the lookups run through Apple Maps on your machine (no keys,
+no accounts), and only the midpoint and the chosen places go to ChattyMaps.
+Elsewhere, ChattyMaps does the lookups with OpenStreetMap.
+
 Options:
-  --what=TEXT        What to look for (default: cafés). Pubs, bars, cafés,
-                     restaurants, parks, plus words like "with a garden".
+  --what=TEXT        What to look for (default: cafés), e.g. pubs, tapas,
+                     "pubs with a garden".
   --count=N          Places to suggest, 2–10 (default: 5)
   --radius=M         Search circle in metres, 100–5000 (default: 1000).
                      Widens automatically if too few places are found.
@@ -29,7 +35,10 @@ Options:
   --title=TEXT       Poll title (default: "Where should we meet? …")
   --name=TEXT        Your name on the poll (default: Organiser)
   --days=N           Close voting after N days
-  --preview          Show the places without creating a poll
+  --preview          Show the places without creating a poll (on a Mac,
+                     this doesn't contact ChattyMaps at all)
+  --source=WHERE     Who finds the places: apple, chattymaps, or auto
+                     (default: apple on a Mac, otherwise chattymaps)
   --open             Open the poll in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
@@ -66,6 +75,7 @@ export function parseCli(argv, env = process.env) {
       open: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       url: { type: 'string' },
+      source: { type: 'string', default: 'auto' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -95,9 +105,10 @@ export function parseCli(argv, env = process.env) {
     ...(days ? { expiresIn: days * 86_400 } : {}),
     ...(values.preview ? { preview: true } : {}),
   };
+  if (!['auto', 'apple', 'chattymaps'].includes(values.source)) throw new UsageError('--source must be apple, chattymaps or auto');
   const baseUrl = (values.url ?? env.CHATTYMAPS_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   try { new URL(baseUrl); } catch { throw new UsageError(`--url is not a valid URL: ${baseUrl}`); }
-  return { body, baseUrl, json: values.json, open: values.open, whatFromPosition };
+  return { body, baseUrl, json: values.json, open: values.open, whatFromPosition, source: values.source };
 }
 
 export class ApiError extends Error {
@@ -149,7 +160,7 @@ export function formatResult(data) {
   const starts = data.startingPoints ?? [];
   const searched = data.code === 'PLACES_UNAVAILABLE' ? '' : ` · searched within ${formatDistance(data.radiusM)}`;
   lines.push(`${starts.length} starting places, up to ${formatDistance(data.spreadM)} apart${searched}`);
-  lines.push(data.note ?? 'Straight-line middle, not travel time.');
+  lines.push(`${data.note ?? 'Straight-line middle, not travel time.'}${data.source === 'apple' ? ' Places from Apple Maps.' : ''}`);
   if (data.what?.unchecked?.length) lines.push(`Not checked: ${data.what.unchecked.join(', ')}`);
   lines.push('');
 
@@ -158,6 +169,8 @@ export function formatResult(data) {
     lines.push(`${index + 1}. ${place.name}${place.kind ? ` (${place.kind})` : ''}`);
     if (place.address) lines.push(`   ${place.address}`);
     const journeys = (place.fromStartsM ?? []).map((m, i) => `${formatDistance(m)} from ${shortName(starts[i]?.name ?? `start ${i + 1}`)}`);
+    const contact = [place.phone, place.url].filter(Boolean).join(' · ');
+    if (contact) lines.push(`   ${contact}`);
     lines.push(`   ${[`${formatDistance(place.distanceM)} from the middle`, ...journeys].join(' · ')}`);
     lines.push('');
   });
@@ -174,6 +187,37 @@ function openInBrowser(url) {
   spawn(command, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
 }
 
+const DEFAULT_APPLE = { available: () => appleMapsAvailable(), open: (options) => appleMaps(options) };
+
+/** Apple Maps client for this run, or null to let ChattyMaps do the lookups. */
+async function chooseAppleMaps(options, io) {
+  if (options.source === 'chattymaps') return null;
+  const apple = io.apple ?? DEFAULT_APPLE;
+  if (!(await apple.available())) {
+    if (options.source === 'apple') throw new AppleMapsError('Apple Maps needs macOS with the Command Line Tools (xcode-select --install).');
+    return null;
+  }
+  try {
+    return await apple.open({ env: io.env, log: (line) => io.err.write(`${line}\n`) });
+  } catch (error) {
+    if (options.source === 'apple' || !(error instanceof AppleMapsError)) throw error;
+    io.err.write(`${error.message}\nUsing ChattyMaps to find places instead.\n`);
+    return null;
+  }
+}
+
+async function findWithApple(options, maps, io) {
+  const local = await findMiddleLocally(options.body, maps);
+  if (options.body.preview) return { preview: true, ...local };
+  if (local.candidates.length < 2)
+    throw new LocalSearchError(
+      `A poll needs at least two places, and Apple Maps found ${local.candidates.length === 0 ? 'none' : 'only one'} within ${formatDistance(local.radiusM)} of the middle. Try something else with --what, or a bigger --radius.`,
+      local,
+    );
+  const created = await requestMiddle(options.baseUrl, placesRequest(local, options.body), io.fetch);
+  return { ...local, id: created.id, url: created.url, preview: false };
+}
+
 export async function main(argv = process.argv.slice(2), io = { out: process.stdout, err: process.stderr, env: process.env, fetch }) {
   let options;
   try {
@@ -186,11 +230,19 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   if (options.version) { io.out.write(`${VERSION}\n`); return 0; }
 
   try {
-    const data = await requestMiddle(options.baseUrl, options.body, io.fetch);
+    const maps = await chooseAppleMaps(options, io);
+    const data = maps ? await findWithApple(options, maps, io) : await requestMiddle(options.baseUrl, options.body, io.fetch);
     io.out.write(options.json ? `${JSON.stringify(data, null, 2)}\n` : `${formatResult(data)}\n`);
     if (options.open && data.url) openInBrowser(data.url);
     return 0;
   } catch (error) {
+    if (error instanceof AppleMapsError || error instanceof LocalSearchError) {
+      if (options.json && error.data) io.out.write(`${JSON.stringify(error.data, null, 2)}\n`);
+      let message = `Error: ${error.message}`;
+      if (!options.json && error.data?.midpoint) message += `\n\n${formatResult(error.data)}`;
+      io.err.write(`${message}\n`);
+      return 1;
+    }
     if (!(error instanceof ApiError)) throw error;
     if (options.json && error.data) io.out.write(`${JSON.stringify(error.data, null, 2)}\n`);
     let message = `Error: ${error.message}`;

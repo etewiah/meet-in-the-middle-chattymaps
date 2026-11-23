@@ -22,6 +22,27 @@ Vote here: https://chattymaps.etewiah.workers.dev/poll/abc123
 Share the link and everyone votes on the places, or adds a better one. No
 account and no API key.
 
+## On a Mac, Apple Maps does the lookups
+
+On macOS, `middle` takes the same approach as George Mandis's
+[`nearme`](https://less.software/nearme/) and
+[`whereami`](https://less.software/whereami/): it calls Apple's MapKit and
+CoreLocation directly, through a small Swift helper (`src/mapkit-helper.swift`).
+Geocoding, place search and naming the middle all happen on your machine. That
+means:
+
+- No API keys, no accounts, and no OpenStreetMap servers.
+- **Your starting places never leave your Mac.** ChattyMaps receives only the
+  midpoint and the chosen places.
+- `--preview` doesn't contact ChattyMaps at all.
+
+The helper is compiled on first use with Apple's Command Line Tools
+(`xcode-select --install` if you don't have them). That takes about 15
+seconds, and the result is cached in `~/Library/Caches/chattymaps-middle/`.
+
+Elsewhere, or with `--source=chattymaps`, ChattyMaps does the lookups with
+OpenStreetMap data.
+
 ## Why a vote?
 
 The middle is an average of coordinates, and it knows nothing about what's
@@ -68,6 +89,7 @@ Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8.
 | `--preview` | Show the places without creating a poll |
 | `--open` | Open the poll in your browser |
 | `--json` | Print the raw JSON response |
+| `--source=WHERE` | `apple`, `chattymaps` or `auto` (default: `apple` on a Mac, otherwise `chattymaps`) |
 | `--url=URL` | ChattyMaps server (default: `$CHATTYMAPS_URL`, then the public site) |
 
 Point it at a local ChattyMaps with
@@ -75,13 +97,21 @@ Point it at a local ChattyMaps with
 
 ## How it works
 
-The CLI makes one `POST /api/middle` request. ChattyMaps looks up the
-starting places, averages them, searches OpenStreetMap places near the
-midpoint, and creates an unlisted poll. Starting places are used only for that
-request and aren't stored. The API contract is in the ChattyMaps repo, in
-`docs/MIDDLE_API.md`.
+With Apple Maps, the CLI geocodes the starting places, averages them, names
+the middle, and searches near it, widening from 1 km to 2 km and then 4 km if
+too few places turn up. It then sends `POST /api/middle` with the midpoint and
+the places, and ChattyMaps creates an unlisted poll.
+
+With `--source=chattymaps`, the CLI sends the starting places instead, and
+ChattyMaps does the same steps with OpenStreetMap data. It uses them only for
+that request and doesn't store them.
+
+The API contract is in the ChattyMaps repo, in `docs/MIDDLE_API.md`.
 
 ## Limits
+
+- Apple's search reads what you type as free text ("tapas", "ramen" and so on)
+  but treats extra words like "with a garden" as a hint, not a filter.
 
 - The middle is a straight line, not travel time.
 - A poll created here has no organiser controls in the browser yet. People
@@ -94,9 +124,11 @@ request and aren't stored. The API contract is in the ChattyMaps repo, in
 Inspired by George Mandis's
 [Let's Meet in the Middle](https://george.mand.is/2026/11/lets-meet-in-the-middle/),
 which chains his [`whereami`](https://github.com/georgemandis/whereami) and
-[`nearme`](https://github.com/georgemandis/nearme) tools on macOS. This is a new
-implementation with no code from those projects. It adds a group vote, so the
-group can fix a middle that lands somewhere awkward.
+[`nearme`](https://github.com/georgemandis/nearme) tools on macOS. The Apple
+Maps path borrows their key idea: macOS's own MapKit search is free, needs no
+keys, and runs locally. The code is new (Swift and Node, where theirs is Zig),
+and it adds a group vote, so the group can fix a middle that lands somewhere
+awkward.
 
 ## Development
 
