@@ -82,3 +82,15 @@ test('main reports a server without the endpoint', async () => {
   assert.equal(await main(['A', 'B'], streams), 1);
   assert.match(streams.errors.join(''), /doesn't have \/api\/middle/);
 });
+
+test('when the places service is down, it still shows the middle without claiming nothing was found', async () => {
+  const streams = io(async () => Response.json({
+    error: "The places service didn't answer, so no venues could be suggested.", code: 'PLACES_UNAVAILABLE',
+    midpoint: response.midpoint, spreadM: 15_300, startingPoints: response.startingPoints, radiusM: 1000, candidates: [],
+  }, { status: 502 }));
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs'], streams), 1);
+  const text = streams.errors.join('');
+  assert.match(text, /places service didn't answer/);
+  assert.match(text, /Middle: Hoxton, London/);
+  assert.doesNotMatch(text, /No pubs found|searched within/);
+});

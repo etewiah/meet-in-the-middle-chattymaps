@@ -147,12 +147,13 @@ export function formatResult(data) {
   const where = [middle.label, middle.regionLabel].filter(Boolean).join(', ');
   lines.push(`Middle: ${where} (${middle.lat.toFixed(4)}, ${middle.lng.toFixed(4)})`);
   const starts = data.startingPoints ?? [];
-  lines.push(`${starts.length} starting places, up to ${formatDistance(data.spreadM)} apart · searched within ${formatDistance(data.radiusM)}`);
+  const searched = data.code === 'PLACES_UNAVAILABLE' ? '' : ` · searched within ${formatDistance(data.radiusM)}`;
+  lines.push(`${starts.length} starting places, up to ${formatDistance(data.spreadM)} apart${searched}`);
   lines.push(data.note ?? 'Straight-line middle, not travel time.');
   if (data.what?.unchecked?.length) lines.push(`Not checked: ${data.what.unchecked.join(', ')}`);
   lines.push('');
 
-  if (!data.candidates?.length) lines.push(`No ${String(data.what?.label ?? 'places').toLowerCase()} found near the middle.`, '');
+  if (!data.candidates?.length && data.code !== 'PLACES_UNAVAILABLE') lines.push(`No ${String(data.what?.label ?? 'places').toLowerCase()} found near the middle.`, '');
   data.candidates?.forEach((place, index) => {
     lines.push(`${index + 1}. ${place.name}${place.kind ? ` (${place.kind})` : ''}`);
     if (place.address) lines.push(`   ${place.address}`);
