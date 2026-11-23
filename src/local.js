@@ -119,6 +119,8 @@ export function placesRequest(summary, body) {
     ...(summary.area ? { area: summary.area } : {}),
     what: summary.what.query,
     radiusM: summary.radiusM,
+    // Lets ChattyMaps credit Apple Maps on the poll's map.
+    source: 'apple_maps',
     ...(body.title ? { title: body.title } : {}),
     ...(body.nickname ? { nickname: body.nickname } : {}),
     ...(body.expiresIn ? { expiresIn: body.expiresIn } : {}),

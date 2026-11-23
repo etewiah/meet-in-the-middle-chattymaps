@@ -126,8 +126,9 @@ test('on a Mac, creating a poll sends only the midpoint and places, never the st
   let sent;
   const streams = io(async (url, init) => { sent = JSON.parse(init.body); return Response.json({ id: 'p1', url: 'https://chattymaps.test/poll/p1' }, { status: 201 }); }, apple);
   assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2', '--name=Sam'], streams), 0);
-  assert.deepEqual(Object.keys(sent).sort(), ['area', 'midpoint', 'nickname', 'places', 'radiusM', 'what']);
+  assert.deepEqual(Object.keys(sent).sort(), ['area', 'midpoint', 'nickname', 'places', 'radiusM', 'source', 'what']);
   assert.deepEqual(sent.area, { label: 'Hoxton', regionLabel: 'London', countryCode: 'gb' });
+  assert.equal(sent.source, 'apple_maps');
   assert.deepEqual(sent.places.map((p) => p.name), ['The Eagle', 'The Wenlock']);
   assert.doesNotMatch(JSON.stringify(sent), /Clapham|Walthamstow|51\.4618/);
   assert.match(streams.output.join(''), /Vote here: https:\/\/chattymaps\.test\/poll\/p1/);
