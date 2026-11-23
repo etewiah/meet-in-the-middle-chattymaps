@@ -112,7 +112,6 @@ The API contract is in the ChattyMaps repo, in `docs/MIDDLE_API.md`.
 
 - Apple's search reads what you type as free text ("tapas", "ramen" and so on)
   but treats extra words like "with a garden" as a hint, not a filter.
-
 - The middle is a straight line, not travel time.
 - A poll created here has no organiser controls in the browser yet. People
   can vote, add places and comment, but nobody can close it.
