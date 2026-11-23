@@ -1,6 +1,20 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { formatDistance, formatResult, main, parseCli, UsageError } from '../src/cli.js';
+import { displayPath, historyPath } from '../src/history.js';
+
+const testTempDirs = [];
+function tempHistoryFile() {
+  const dir = mkdtempSync(join(tmpdir(), 'chattymaps-middle-history-'));
+  testTempDirs.push(dir);
+  return join(dir, 'polls.jsonl');
+}
+after(() => {
+  for (const dir of testTempDirs) rmSync(dir, { recursive: true, force: true });
+});
 
 const env = {};
 
@@ -58,9 +72,21 @@ test('human output lists places with journeys and ends with the vote link', () =
 
 const noApple = { available: async () => false, open: async () => { throw new Error('unused'); } };
 
-function io(fetchImpl, apple = noApple) {
+function io(fetchImpl, apple = noApple, extra = {}) {
   const out = []; const err = [];
-  return { out: { write: (s) => out.push(s) }, err: { write: (s) => err.push(s) }, env, fetch: fetchImpl, apple, output: out, errors: err };
+  const historyFile = extra.historyFile ?? tempHistoryFile();
+  const mergedEnv = { CHATTYMAPS_MIDDLE_HISTORY: historyFile, ...(extra.env ?? {}) };
+  return {
+    out: { write: (s) => out.push(s) },
+    err: { write: (s) => err.push(s) },
+    env: mergedEnv,
+    fetch: fetchImpl,
+    apple,
+    openUrl: extra.openUrl,
+    historyFile,
+    output: out,
+    errors: err,
+  };
 }
 
 // A fake Apple Maps: Clapham and Walthamstow, a midpoint in Hoxton, three pubs.
@@ -200,4 +226,149 @@ test('prints the one-time manage link after the vote link, with a warning to kee
   const text = streams.output.join('');
   assert.match(text, /Vote here: https:\/\/chattymaps\.test\/poll\/p1\n\nManage it: https:\/\/chattymaps\.test\/poll\/p1#manage=/);
   assert.match(text, /Keep this link to yourself/);
+  assert.match(text, /Saved to: .*\(private, owner-only\)/);
+  assert.match(text, /Pass --no-save to skip saving/);
+});
+
+test('saves created poll to private 0600 history without starting places, and reports it clearly', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const manageUrl = 'https://chattymaps.test/poll/p9#manage=secret123';
+  const streams = io(async () => Response.json({ id: 'p9', url: 'https://chattymaps.test/poll/p9', manageUrl, manageExpiresAt: '2026-12-23T00:00:00Z' }, { status: 201 }), apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--title=Friday pints', '--count=2'], streams), 0);
+
+  assert.equal(existsSync(streams.historyFile), true);
+  assert.equal(statSync(streams.historyFile).mode & 0o777, 0o600);
+  const raw = readFileSync(streams.historyFile, 'utf8');
+  assert.doesNotMatch(raw, /Clapham|Walthamstow|51\.4618|51\.5839/);
+  const entry = JSON.parse(raw.trim());
+  assert.equal(entry.id, 'p9');
+  assert.equal(entry.title, 'Friday pints');
+  assert.equal(entry.what, 'pubs');
+  assert.equal(entry.area, 'Hoxton, London');
+  assert.equal(entry.url, 'https://chattymaps.test/poll/p9');
+  assert.equal(entry.manageUrl, manageUrl);
+  assert.equal(entry.manageExpiresAt, '2026-12-23T00:00:00Z');
+  assert.deepEqual(entry.places, ['The Eagle', 'The Wenlock']);
+  assert.match(streams.output.join(''), new RegExp(`Saved to: .*polls\\.jsonl \\(private, owner-only\\)`));
+});
+
+test('--no-save skips writing to disk and tells the user clearly', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const streams = io(async () => Response.json({ id: 'p10', url: 'https://chattymaps.test/poll/p10' }, { status: 201 }), apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2', '--no-save'], streams), 0);
+  assert.equal(existsSync(streams.historyFile), false);
+  const text = streams.output.join('');
+  assert.match(text, /Not saved \(--no-save\)/);
+  assert.doesNotMatch(text, /Saved to:/);
+});
+
+test('--no-save with --json sets savedTo to null and writes nothing', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const streams = io(async () => Response.json({ id: 'p11', url: 'https://chattymaps.test/poll/p11' }, { status: 201 }), apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2', '--no-save', '--json'], streams), 0);
+  assert.equal(existsSync(streams.historyFile), false);
+  const parsed = JSON.parse(streams.output.join(''));
+  assert.equal(parsed.savedTo, null);
+});
+
+test('--preview never writes to history', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const streams = io(async () => { throw new Error('unused'); }, apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--preview'], streams), 0);
+  assert.equal(existsSync(streams.historyFile), false);
+  assert.match(streams.output.join(''), /nothing was saved/);
+});
+
+test('middle-with-me saves poll without current coordinates or starting places, and respects --no-save', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const savedStreams = io(async () => Response.json({ id: 'm1', url: 'https://chattymaps.test/poll/m1' }, { status: 201 }), apple);
+  assert.equal(await main(['Walthamstow', 'pubs', '--count=2'], savedStreams, { withMe: true }), 0);
+  const raw = readFileSync(savedStreams.historyFile, 'utf8');
+  assert.doesNotMatch(raw, /Walthamstow|51\.4618|you/);
+
+  const skippedStreams = io(async () => Response.json({ id: 'm2', url: 'https://chattymaps.test/poll/m2' }, { status: 201 }), apple);
+  assert.equal(await main(['Walthamstow', 'pubs', '--count=2', '--no-save'], skippedStreams, { withMe: true }), 0);
+  assert.equal(existsSync(skippedStreams.historyFile), false);
+});
+
+test('middle history and middle last read, open, show path, and clear saved polls', async () => {
+  const historyFile = tempHistoryFile();
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+
+  // Empty state
+  const emptyHist = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['history'], emptyHist), 0);
+  assert.match(emptyHist.output.join(''), /No saved polls/);
+
+  const emptyLast = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['last'], emptyLast), 1);
+  assert.match(emptyLast.errors.join(''), /No saved polls/);
+
+  // Create two polls
+  const s1 = io(async () => Response.json({ id: 'p1', url: 'https://chattymaps.test/poll/p1' }, { status: 201 }), apple, { historyFile });
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--title=First poll', '--count=2'], s1), 0);
+
+  const manageUrl = 'https://chattymaps.test/poll/p2#manage=tok2';
+  const s2 = io(async () => Response.json({ id: 'p2', url: 'https://chattymaps.test/poll/p2', manageUrl, manageExpiresAt: '2026-12-23T00:00:00Z' }, { status: 201 }), apple, { historyFile });
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--title=Second poll', '--count=2'], s2), 0);
+
+  // middle history
+  const list = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['history'], list), 0);
+  assert.match(list.output.join(''), /1\. First poll/);
+  assert.match(list.output.join(''), /2\. Second poll/);
+  assert.match(list.output.join(''), /middle history --clear/);
+
+  // middle history --json
+  const listJson = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['history', '--json'], listJson), 0);
+  assert.deepEqual(JSON.parse(listJson.output.join('')).map((e) => e.id), ['p1', 'p2']);
+
+  // middle history --path
+  const pathOut = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['history', '--path'], pathOut), 0);
+  assert.equal(pathOut.output.join('').trim(), historyFile);
+
+  // middle last --open
+  const opened = [];
+  const lastOpen = io(async () => { throw new Error('unused'); }, noApple, { historyFile, openUrl: (u) => opened.push(u) });
+  assert.equal(await main(['last', '--open'], lastOpen), 0);
+  assert.match(lastOpen.output.join(''), /Second poll/);
+  assert.deepEqual(opened, [manageUrl]);
+
+  // middle last --json
+  const lastJson = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['last', '--json'], lastJson), 0);
+  assert.equal(JSON.parse(lastJson.output.join('')).id, 'p2');
+
+  // middle history --clear
+  const cleared = io(async () => { throw new Error('unused'); }, noApple, { historyFile });
+  assert.equal(await main(['history', '--clear'], cleared), 0);
+  assert.match(cleared.output.join(''), /Deleted saved poll history/);
+  assert.equal(existsSync(historyFile), false);
+});
+
+test('history subcommand flag validation and default path helper', () => {
+  assert.throws(() => parseCli(['A', 'B', '--clear'], env), UsageError);
+  assert.throws(() => parseCli(['A', 'B', '--path'], env), UsageError);
+  assert.throws(() => parseCli(['history', '--open'], env), UsageError);
+  assert.throws(() => parseCli(['history', '--clear', '--path'], env), UsageError);
+  assert.throws(() => parseCli(['last', '--clear'], env), UsageError);
+  assert.throws(() => parseCli(['history', '--no-save'], env), UsageError);
+  // Two words starting with "history" are treated as normal starting places, not a subcommand.
+  assert.deepEqual(parseCli(['history', 'Camden'], env).body, { from: ['history', 'Camden'] });
+
+  assert.match(historyPath({}), /Library\/Application Support\/chattymaps-middle\/polls\.jsonl$/);
+  assert.equal(displayPath('/Users/alice/Library/Application Support/chattymaps-middle/polls.jsonl', '/Users/alice'), '~/Library/Application Support/chattymaps-middle/polls.jsonl');
+});
+
+test('a failure writing history warns on stderr without losing the created poll output', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  // Point CHATTYMAPS_MIDDLE_HISTORY at an existing directory so appendFileSync fails with EISDIR.
+  const dir = mkdtempSync(join(tmpdir(), 'chattymaps-middle-eisdir-'));
+  testTempDirs.push(dir);
+  const streams = io(async () => Response.json({ id: 'p12', url: 'https://chattymaps.test/poll/p12' }, { status: 201 }), apple, { historyFile: dir });
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2'], streams), 0);
+  assert.match(streams.output.join(''), /Vote here: https:\/\/chattymaps\.test\/poll\/p12/);
+  assert.match(streams.errors.join(''), /Warning: couldn't save poll/);
 });

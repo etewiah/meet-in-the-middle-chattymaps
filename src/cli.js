@@ -1,6 +1,16 @@
 import { parseArgs } from 'node:util';
 import { spawn } from 'node:child_process';
 import { appleMaps, appleMapsAvailable, AppleMapsError } from './apple.js';
+import {
+  appendHistory,
+  buildHistoryEntry,
+  clearHistory,
+  displayPath,
+  formatHistoryEntry,
+  formatHistoryList,
+  historyPath,
+  readHistory,
+} from './history.js';
 import { findMiddleLocally, LocalSearchError, placesRequest } from './local.js';
 
 export const VERSION = '0.2.0';
@@ -11,6 +21,8 @@ export const USAGE = `middle — find places to meet in the middle on macOS, the
 
 Usage:
   middle <place> <place> [more places…] [what] [options]
+  middle history [--path | --clear | --json]
+  middle last [--open | --json]
 
   With three or more words, the last one is what to look for:
     middle "Clapham" "Walthamstow" pubs
@@ -25,6 +37,14 @@ All lookups run locally on your Mac through Apple Maps (no keys, no accounts).
 Your starting places never leave your machine — only the midpoint, area and
 chosen places are sent to ChattyMaps to create the poll.
 
+Saved poll history:
+  By default, creating a poll saves its title, area, place names, vote link and
+  one-time manage link (never your starting places) to an owner-only (0600) file:
+    ~/Library/Application Support/chattymaps-middle/polls.jsonl
+  Override the path with CHATTYMAPS_MIDDLE_HISTORY. Pass --no-save to write
+  nothing to disk. --preview never saves anything. Run 'middle history --clear'
+  to delete the file.
+
 Options:
   --what=TEXT        What to look for (default: cafés), e.g. pubs, tapas,
                      "pubs with a garden".
@@ -36,13 +56,20 @@ Options:
   --name=TEXT        Your name on the poll (default: Organiser)
   --days=N           Close voting after N days
   --preview          Show the places without creating a poll (doesn't contact
-                     ChattyMaps at all)
+                     ChattyMaps or save anything locally)
+  --no-save          Do not save the created poll to local history
   --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
                      ${DEFAULT_BASE_URL})
   -h, --help         Show help
   -v, --version      Show version
+
+History commands:
+  middle history          List saved polls and show the file location
+  middle history --path   Print the exact path to the saved history file
+  middle history --clear  Delete the saved history file
+  middle last             Show the most recently saved poll (--open to open it)
 
 The middle is a straight-line average, not travel time. That's why the
 group gets a vote.`;
@@ -67,6 +94,14 @@ current location and starting places never leave your machine — only the
 midpoint, area and chosen places go to ChattyMaps. On first run, macOS will ask
 to allow Location Services for your terminal.
 
+Saved poll history:
+  By default, creating a poll saves its title, area, place names, vote link and
+  one-time manage link (never your current location or starting places) to an
+  owner-only (0600) file:
+    ~/Library/Application Support/chattymaps-middle/polls.jsonl
+  Pass --no-save to write nothing to disk. View or clear saved polls with
+  'middle history' and 'middle last'.
+
 Options:
   --what=TEXT        What to look for (default: cafés), e.g. pubs, tapas,
                      "pubs with a garden".
@@ -78,7 +113,8 @@ Options:
   --name=TEXT        Your name on the poll (default: Organiser)
   --days=N           Close voting after N days
   --preview          Show the places without creating a poll (doesn't contact
-                     ChattyMaps at all)
+                     ChattyMaps or save anything locally)
+  --no-save          Do not save the created poll to local history
   --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
@@ -112,6 +148,9 @@ export function parseCli(argv, env = process.env, { withMe = false } = {}) {
       name: { type: 'string' },
       days: { type: 'string' },
       preview: { type: 'boolean', default: false },
+      'no-save': { type: 'boolean', default: false },
+      clear: { type: 'boolean', default: false },
+      path: { type: 'boolean', default: false },
       open: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       url: { type: 'string' },
@@ -122,6 +161,19 @@ export function parseCli(argv, env = process.env, { withMe = false } = {}) {
   if (values.help || values.version) return { help: values.help, version: values.version, withMe };
 
   const words = positionals.map((word) => word.trim()).filter(Boolean);
+  if (!withMe && words.length === 1 && (words[0] === 'history' || words[0] === 'last')) {
+    const command = words[0];
+    const disallowed = ['what', 'count', 'radius', 'country', 'title', 'name', 'days', 'preview', 'url', 'no-save'];
+    if (command === 'history') disallowed.push('open');
+    if (command === 'last') disallowed.push('clear', 'path');
+    const bad = disallowed.find((key) => values[key] !== undefined && values[key] !== false);
+    if (bad) throw new UsageError(`--${bad} can't be used with 'middle ${command}'.`);
+    if (values.clear && values.path) throw new UsageError("Use either --clear or --path with 'middle history', not both.");
+    return { command, clear: values.clear, path: values.path, open: values.open, json: values.json, withMe };
+  }
+  if (values.clear) throw new UsageError("--clear can only be used with 'middle history'.");
+  if (values.path) throw new UsageError("--path can only be used with 'middle history'.");
+
   let what = values.what;
   let whatFromPosition = false;
   const minWords = withMe ? 1 : 2;
@@ -149,7 +201,7 @@ export function parseCli(argv, env = process.env, { withMe = false } = {}) {
   };
   const baseUrl = (values.url ?? env.CHATTYMAPS_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   try { new URL(baseUrl); } catch { throw new UsageError(`--url is not a valid URL: ${baseUrl}`); }
-  return { body, baseUrl, json: values.json, open: values.open, whatFromPosition, withMe };
+  return { body, baseUrl, json: values.json, open: values.open, noSave: values['no-save'], whatFromPosition, withMe };
 }
 
 export class ApiError extends Error {
@@ -193,7 +245,7 @@ function shortName(name) {
   return name.split(',')[0].trim();
 }
 
-export function formatResult(data) {
+export function formatResult(data, { savedTo = null, noSave = false } = {}) {
   const lines = [];
   const middle = data.midpoint;
   const where = [middle.label, middle.regionLabel].filter(Boolean).join(', ');
@@ -219,12 +271,60 @@ export function formatResult(data) {
     lines.push('', `Manage it: ${data.manageUrl}`);
     lines.push('  Keep this link to yourself. The first browser to open it becomes the organiser');
     lines.push('  (edit, close, decide), and then the link stops working. Unused, it expires in 30 days.');
-  } else if (data.preview) lines.push('Preview only: no poll was created. Run again without --preview to create one.');
+  } else if (data.preview) {
+    lines.push('Preview only: no poll was created and nothing was saved. Run again without --preview to create one.');
+  }
+
+  if (!data.preview && data.url) {
+    if (savedTo) {
+      lines.push('', `Saved to: ${displayPath(savedTo)} (private, owner-only)`);
+      lines.push('  Stores the poll title, area, place names, vote link and manage link — never your starting places.');
+      lines.push('  View later with `middle history` or `middle last`. Pass --no-save to skip saving.');
+    } else if (noSave) {
+      lines.push('', 'Not saved (--no-save). Copy these links now — nothing was written to disk.');
+    }
+  }
   return lines.join('\n');
 }
 
 function openInBrowser(url) {
   spawn('open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+}
+
+function runHistoryCommand(options, streams) {
+  const filePath = historyPath(streams.env);
+  if (options.command === 'history') {
+    if (options.path) {
+      streams.out.write(`${filePath}\n`);
+      return 0;
+    }
+    if (options.clear) {
+      const { cleared } = clearHistory(streams.env);
+      const shown = displayPath(filePath);
+      streams.out.write(cleared ? `Deleted saved poll history: ${shown}\n` : `No saved poll history found at ${shown}.\n`);
+      return 0;
+    }
+    const entries = readHistory(streams.env);
+    streams.out.write(options.json ? `${JSON.stringify(entries, null, 2)}\n` : `${formatHistoryList(entries, filePath)}\n`);
+    return 0;
+  }
+
+  // options.command === 'last'
+  const entries = readHistory(streams.env);
+  if (!entries.length) {
+    streams.err.write(`No saved polls in ${displayPath(filePath)}.\n`);
+    return 1;
+  }
+  const latest = entries[entries.length - 1];
+  if (options.json) {
+    streams.out.write(`${JSON.stringify(latest, null, 2)}\n`);
+  } else {
+    streams.out.write(`${formatHistoryEntry(latest)}\n\nSaved in: ${displayPath(filePath)} (private, owner-only)\n`);
+  }
+  if (options.open && (latest.manageUrl || latest.url)) {
+    (streams.openUrl ?? openInBrowser)(latest.manageUrl ?? latest.url);
+  }
+  return 0;
 }
 
 const DEFAULT_APPLE = { available: () => appleMapsAvailable(), open: (options) => appleMaps(options) };
@@ -270,6 +370,7 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   }
   if (options.help) { streams.out.write(`${withMe ? USAGE_WITH_ME : USAGE}\n`); return 0; }
   if (options.version) { streams.out.write(`${VERSION}\n`); return 0; }
+  if (options.command) return runHistoryCommand(options, streams);
 
   try {
     const maps = await openAppleMaps(streams, { withMe });
@@ -279,9 +380,23 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       me = { name: 'you', lat: located.lat, lng: located.lng };
     }
     const data = await findWithApple(options, maps, streams, me);
-    streams.out.write(options.json ? `${JSON.stringify(data, null, 2)}\n` : `${formatResult(data)}\n`);
+    let savedTo = null;
+    if (!data.preview && data.url && !options.noSave) {
+      try {
+        savedTo = appendHistory(buildHistoryEntry(data, options.body.title), streams.env);
+      } catch (saveError) {
+        const target = displayPath(historyPath(streams.env));
+        streams.err.write(`Warning: couldn't save poll to ${target}: ${saveError.message}. Copy the links above now.\n`);
+      }
+    }
+    if (options.json) {
+      const payload = data.preview ? data : { ...data, savedTo };
+      streams.out.write(`${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      streams.out.write(`${formatResult(data, { savedTo, noSave: options.noSave })}\n`);
+    }
     // Whoever runs the CLI is usually the organiser, so open the manage link.
-    if (options.open && (data.manageUrl || data.url)) openInBrowser(data.manageUrl ?? data.url);
+    if (options.open && (data.manageUrl || data.url)) (streams.openUrl ?? openInBrowser)(data.manageUrl ?? data.url);
     return 0;
   } catch (error) {
     if (error instanceof AppleMapsError || error instanceof LocalSearchError || error instanceof ApiError) {

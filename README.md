@@ -17,6 +17,14 @@ Straight-line middle, not travel time. Places from Apple Maps.
 2. …
 
 Vote here: https://chattymaps.etewiah.workers.dev/poll/abc123
+
+Manage it: https://chattymaps.etewiah.workers.dev/poll/abc123#manage=…
+  Keep this link to yourself. The first browser to open it becomes the organiser
+  (edit, close, decide), and then the link stops working. Unused, it expires in 30 days.
+
+Saved to: ~/Library/Application Support/chattymaps-middle/polls.jsonl (private, owner-only)
+  Stores the poll title, area, place names, vote link and manage link — never your starting places.
+  View later with `middle history` or `middle last`. Pass --no-save to skip saving.
 ```
 
 Share the link and everyone votes on the places, or adds a better one. No
@@ -64,6 +72,15 @@ middle "Richmond" "Kingston" cafés --country=gb
 middle "Brooklyn" "Queens" "Hoboken" --what=ramen \
   --title="Friday dinner" --name="Sam" --days=3 --open
 
+# Create a poll without saving anything to local history
+middle "Clapham" "Walthamstow" pubs --no-save
+
+# View or reopen previously created polls
+middle history
+middle last
+middle last --open
+middle history --clear
+
 # Widen the net and ask for more options (e.g. from coordinates + a neighbourhood)
 middle "51.5074,-0.1278" "Greenwich" parks --radius=2000 --count=8
 
@@ -105,7 +122,8 @@ Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8
 | `--title=TEXT` | Poll title |
 | `--name=TEXT` | Your name on the poll (default: Organiser) |
 | `--days=N` | Close voting after N days, 1–90 |
-| `--preview` | Show the places without creating a poll |
+| `--preview` | Show the places without creating a poll (never contacts ChattyMaps or saves anything) |
+| `--no-save` | Do not save the created poll to local history |
 | `--open` | Open the poll in your browser as its organiser (uses the one-time manage link) |
 | `--json` | Print the raw JSON response |
 | `--url=URL` | ChattyMaps server (default: `$CHATTYMAPS_URL`, then the public site) |
@@ -144,6 +162,49 @@ Creating a poll prints two links:
 Organiser rights live in that browser, the same as for polls made on the
 website. The design and the alternatives considered are in the ChattyMaps
 repo, in `docs/MIDDLE_DECISIONS.md` (D8).
+
+## Saved poll history
+
+Because ChattyMaps has no user accounts, closing your terminal after creating a
+poll without `--open` would otherwise lose both the unlisted **Vote here** link
+and the one-time **Manage it** link.
+
+To prevent that, every created poll is appended by default to a private,
+owner-only (`0600`) file outside your current working directory:
+
+```
+~/Library/Application Support/chattymaps-middle/polls.jsonl
+```
+
+Every time a poll is saved, the CLI prints a `Saved to:` notice telling you
+this exact path, what was stored, and how to skip it next time.
+
+- **What is saved:** timestamp, poll ID, title, venue type (`what`), midpoint
+  area label, suggested venue names, `Vote here` link, and `Manage it` link
+  (+ expiry date).
+- **What is never saved:** your starting places, postcodes, or your current
+  location from `middle-with-me`. `--preview` runs never write to disk.
+- **Why not the current folder:** storing links in macOS Application Support
+  (instead of the folder you ran `middle` from) avoids cluttering directories
+  and prevents accidentally committing private poll URLs or one-time manage
+  secrets into a git repo.
+- **Opt out:** pass `--no-save` on any run to write nothing to disk. The CLI
+  confirms `Not saved (--no-save)` in its output.
+- **Custom location:** set `CHATTYMAPS_MIDDLE_HISTORY=/path/to/file.jsonl`.
+
+Manage your saved history with:
+
+```bash
+middle history           # list all saved polls
+middle history --path    # print the exact file path
+middle history --json    # print saved polls as JSON
+middle history --clear   # delete the history file
+middle last              # show the most recent saved poll
+middle last --open       # open the most recent poll in your browser
+```
+
+See `docs/MIDDLE_DECISIONS.md` (D9) in the ChattyMaps repo for the full design
+record.
 
 ## Why a vote?
 
