@@ -55,8 +55,8 @@ lets the group fix it.
 You need Node 20 or later. There are no dependencies.
 
 ```bash
-git clone <this repo> chattymaps-middle
-cd chattymaps-middle
+git clone <this repo> meet-in-the-middle-chattymaps
+cd meet-in-the-middle-chattymaps
 npm link          # puts `middle` on your PATH
 # or, without linking:
 node bin/middle.js "Brixton" "Camden"
