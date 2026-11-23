@@ -61,8 +61,8 @@ async function call(binary, args, timeout = 30_000) {
 }
 
 /** { geocode, search, reverse, locate } backed by Apple Maps & CoreLocation. */
-export async function appleMaps(options) {
-  const binary = await helperPath(options);
+export async function appleMaps(options = {}) {
+  const binary = options.binary ?? await helperPath(options);
   return {
     /** → { name, lat, lng, countryCode } or null */
     geocode: (text, countryCode, near) => call(binary, [

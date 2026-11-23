@@ -179,5 +179,6 @@ awkward.
 ## Development
 
 ```bash
-npm test    # node --test, no network
+npm test          # unit, CLI & Swift compile tests (offline)
+npm run test:live # live Apple Maps & README example integration tests (macOS, network)
 ```

@@ -1,6 +1,6 @@
 {
   "name": "chattymaps-middle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Find places to meet in the middle, then let the group vote on ChattyMaps",
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
     "src"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/*.test.js",
+    "test:live": "node --test test/live/*.test.js"
   },
   "engines": {
     "node": ">=20"
