@@ -1,0 +1,28 @@
+{
+  "name": "chattymaps-middle",
+  "version": "0.1.0",
+  "description": "Find places to meet in the middle, then let the group vote on ChattyMaps",
+  "type": "module",
+  "bin": {
+    "middle": "bin/middle.js"
+  },
+  "files": [
+    "bin",
+    "src"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "cli",
+    "maps",
+    "meet",
+    "midpoint",
+    "poll",
+    "chattymaps"
+  ],
+  "private": true
+}
