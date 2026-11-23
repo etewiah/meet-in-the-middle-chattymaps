@@ -79,7 +79,8 @@ export async function findMiddleLocally(body, maps, { me = null } = {}) {
       starts.push({ name: text.trim(), lat: Number(coordinates[1]), lng: Number(coordinates[2]) });
       continue;
     }
-    const found = await maps.geocode(text, body.country);
+    const near = starts.length > 0 ? midpointOf(starts) : null;
+    const found = await maps.geocode(text, body.country, near);
     if (!found) throw new LocalSearchError(`Couldn't find starting place ${index + 1}, "${text}". Try a town, station, street or postcode.`);
     starts.push(found);
   }

@@ -204,3 +204,27 @@ test('middle-with-me --help prints middle-with-me usage', async () => {
   assert.equal(await main(['--help'], streams, { withMe: true }), 0);
   assert.match(streams.output.join(''), /^middle-with-me —/);
 });
+
+test('on a Mac, subsequent geocodes pass country and the prior starts midpoint as a region hint', async () => {
+  const geocodeCalls = [];
+  const maps = {
+    geocode: async (text, country, near) => {
+      geocodeCalls.push({ text, country, near });
+      return {
+        Richmond: { name: 'Richmond', lat: 51.4612, lng: -0.303, countryCode: 'gb' },
+        Kingston: { name: 'Kingston upon Thames', lat: 51.4087, lng: -0.3066, countryCode: 'gb' },
+      }[text] ?? null;
+    },
+    reverse: async () => ({ label: 'Ham', regionLabel: 'Richmond', countryCode: 'gb' }),
+    search: async () => [
+      { name: 'Café A', lat: 51.435, lng: -0.305 },
+      { name: 'Café B', lat: 51.436, lng: -0.304 },
+    ],
+  };
+  const streams = io(async () => { throw new Error('unused'); }, { available: async () => true, open: async () => maps });
+  assert.equal(await main(['Richmond', 'Kingston', 'cafés', '--country=gb', '--preview'], streams), 0);
+  assert.deepEqual(geocodeCalls, [
+    { text: 'Richmond', country: 'gb', near: null },
+    { text: 'Kingston', country: 'gb', near: { lat: 51.4612, lng: -0.303 } },
+  ]);
+});

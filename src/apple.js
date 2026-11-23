@@ -65,7 +65,12 @@ export async function appleMaps(options) {
   const binary = await helperPath(options);
   return {
     /** → { name, lat, lng, countryCode } or null */
-    geocode: (text, countryCode) => call(binary, ['geocode', text, ...(countryCode ? [countryCode] : [])]),
+    geocode: (text, countryCode, near) => call(binary, [
+      'geocode',
+      text,
+      ...(countryCode || near ? [countryCode ?? ''] : []),
+      ...(near ? [String(near.lat), String(near.lng)] : []),
+    ]),
     /** → [{ name, lat, lng, address, kind, phone, url }] */
     search: (query, center, radiusM) => call(binary, ['search', query, String(center.lat), String(center.lng), String(radiusM)]),
     /** → { label, regionLabel, countryCode } or null */
