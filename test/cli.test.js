@@ -228,3 +228,13 @@ test('on a Mac, subsequent geocodes pass country and the prior starts midpoint a
     { text: 'Kingston', country: 'gb', near: { lat: 51.4612, lng: -0.303 } },
   ]);
 });
+
+test('prints the one-time manage link after the vote link, with a warning to keep it private', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const manageUrl = 'https://chattymaps.test/poll/p1#manage=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
+  const streams = io(async () => Response.json({ id: 'p1', url: 'https://chattymaps.test/poll/p1', manageUrl, manageExpiresAt: '2026-12-23T00:00:00Z' }, { status: 201 }), apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2'], streams), 0);
+  const text = streams.output.join('');
+  assert.match(text, /Vote here: https:\/\/chattymaps\.test\/poll\/p1\n\nManage it: https:\/\/chattymaps\.test\/poll\/p1#manage=/);
+  assert.match(text, /Keep this link to yourself/);
+});

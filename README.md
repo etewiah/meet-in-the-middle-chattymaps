@@ -106,7 +106,7 @@ Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8
 | `--name=TEXT` | Your name on the poll (default: Organiser) |
 | `--days=N` | Close voting after N days, 1–90 |
 | `--preview` | Show the places without creating a poll |
-| `--open` | Open the poll in your browser |
+| `--open` | Open the poll in your browser as its organiser (uses the one-time manage link) |
 | `--json` | Print the raw JSON response |
 | `--source=WHERE` | `apple`, `chattymaps` or `auto` (default: `apple` on a Mac, otherwise `chattymaps`) |
 | `--url=URL` | ChattyMaps server (default: `$CHATTYMAPS_URL`, then the public site) |
@@ -135,6 +135,20 @@ seconds, and the result is cached in `~/Library/Caches/chattymaps-middle/`.
 Elsewhere, or with `--source=chattymaps`, ChattyMaps does the lookups with
 OpenStreetMap data.
 
+## Managing the poll
+
+Creating a poll prints two links:
+
+- **Vote here** is the link to share with the group.
+- **Manage it** is for you. The first browser to open it becomes the
+  organiser: it can edit places, close voting and pick the winner. Then the
+  link stops working. Keep it private. If you don't use it, it expires after 30
+  days. `--open` opens this link for you.
+
+Organiser rights live in that browser, the same as for polls made on the
+website. The design and the alternatives considered are in the ChattyMaps
+repo, in `docs/MIDDLE_DECISIONS.md` (D8).
+
 ## Why a vote?
 
 The middle is an average of coordinates, and it knows nothing about what's
@@ -160,8 +174,6 @@ The API contract is in the ChattyMaps repo, in `docs/MIDDLE_API.md`.
 - Apple's search reads what you type as free text ("tapas", "ramen" and so on)
   but treats extra words like "with a garden" as a hint, not a filter.
 - The middle is a straight line, not travel time.
-- A poll created here has no organiser controls in the browser yet. People
-  can vote, add places and comment, but nobody can close it.
 - `middle-with-me` reads your current location via macOS CoreLocation only.
   Elsewhere, use `middle` and pass your coordinates as `"lat,lng"`.
 

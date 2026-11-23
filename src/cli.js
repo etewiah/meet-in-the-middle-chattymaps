@@ -39,7 +39,7 @@ Options:
                      this doesn't contact ChattyMaps at all)
   --source=WHERE     Who finds the places: apple, chattymaps, or auto
                      (default: apple on a Mac, otherwise chattymaps)
-  --open             Open the poll in your browser
+  --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
                      ${DEFAULT_BASE_URL})
@@ -82,7 +82,7 @@ Options:
                      ChattyMaps at all)
   --source=WHERE     Who finds the places: apple, chattymaps, or auto
                      (default: apple on a Mac)
-  --open             Open the poll in your browser
+  --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
                      ${DEFAULT_BASE_URL})
@@ -222,6 +222,11 @@ export function formatResult(data) {
   });
 
   if (data.url) lines.push(`Vote here: ${data.url}`);
+  if (data.manageUrl) {
+    lines.push('', `Manage it: ${data.manageUrl}`);
+    lines.push('  Keep this link to yourself. The first browser to open it becomes the organiser');
+    lines.push('  (edit, close, decide), and then the link stops working. Unused, it expires in 30 days.');
+  }
   else if (data.preview) lines.push('Preview only: no poll was created. Run again without --preview to create one.');
   return lines.join('\n');
 }
@@ -266,7 +271,7 @@ async function findWithApple(options, maps, io, me = null) {
       local,
     );
   const created = await requestMiddle(options.baseUrl, placesRequest(local, options.body), io.fetch);
-  return { ...local, id: created.id, url: created.url, preview: false };
+  return { ...local, id: created.id, url: created.url, manageUrl: created.manageUrl, manageExpiresAt: created.manageExpiresAt, preview: false };
 }
 
 export async function main(argv = process.argv.slice(2), io = { out: process.stdout, err: process.stderr, env: process.env, fetch }, { withMe = false } = {}) {
@@ -298,7 +303,8 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
       data = maps ? await findWithApple(options, maps, streams) : await requestMiddle(options.baseUrl, options.body, streams.fetch);
     }
     streams.out.write(options.json ? `${JSON.stringify(data, null, 2)}\n` : `${formatResult(data)}\n`);
-    if (options.open && data.url) openInBrowser(data.url);
+    // Whoever runs the CLI is usually the organiser, so open the manage link.
+    if (options.open && (data.manageUrl || data.url)) openInBrowser(data.manageUrl ?? data.url);
     return 0;
   } catch (error) {
     if (error instanceof AppleMapsError || error instanceof LocalSearchError) {
