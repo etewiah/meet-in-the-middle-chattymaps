@@ -1,6 +1,6 @@
 # middle
 
-Find places to meet in the middle, then let the group vote on
+Find places to meet in the middle on macOS, then let the group vote on
 [ChattyMaps](https://chattymaps.etewiah.workers.dev).
 
 ```bash
@@ -24,7 +24,8 @@ account and no API key.
 
 ## Install
 
-You need Node 20 or later. There are no dependencies.
+Requires **macOS**, Node 20 or later, and Apple's Command Line Tools
+(`xcode-select --install`). There are no npm dependencies.
 
 ```bash
 git clone https://github.com/etewiah/meet-in-the-middle-chattymaps.git
@@ -43,10 +44,10 @@ node bin/middle-with-me.js "Camden" pubs --preview
 ## Examples
 
 ```bash
-# Try it without creating a poll (on a Mac, stays completely offline from ChattyMaps)
+# Try it without creating a poll (stays completely offline from ChattyMaps)
 middle "Clapham" "Walthamstow" pubs --preview
 
-# Meet halfway between where you are right now and someone else (macOS)
+# Meet halfway between where you are right now and someone else
 middle-with-me "Walthamstow" pubs --preview
 middle-with-me "Camden" "Brixton" --what=bars
 
@@ -66,8 +67,7 @@ middle "Brooklyn" "Queens" "Hoboken" --what=ramen \
 # Widen the net and ask for more options (e.g. from coordinates + a neighbourhood)
 middle "51.5074,-0.1278" "Greenwich" parks --radius=2000 --count=8
 
-# Use OpenStreetMap via ChattyMaps instead of Apple Maps, or pipe JSON to jq
-middle "Shoreditch" "Soho" tapas --source=chattymaps --preview
+# Pipe JSON to jq
 middle "Clapham" "Walthamstow" pubs --preview --json | jq '.candidates[].name'
 ```
 
@@ -86,19 +86,19 @@ middle-with-me <place> [more places…] [what] [options]
   `middle Brixton Camden Hackney` will search for `"Hackney"` between Brixton
   and Camden:
   `middle Brixton Camden Hackney --what=bars`
-- `middle-with-me` (macOS) uses your Mac's current location via CoreLocation as
-  the first starting place, so you only pass the other places:
+- `middle-with-me` uses your Mac's current location via CoreLocation as the
+  first starting place, so you only pass the other places:
   `middle-with-me Camden` (cafés), `middle-with-me Camden pubs`, or
   `middle-with-me Camden Brixton --what=bars`. On first run, macOS will prompt
   you to allow Location Services for your terminal (Wi-Fi must be on). Your
-  location stays on your Mac unless you pass `--source=chattymaps`.
+  location never leaves your Mac.
 
 Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8
 (7 other places with `middle-with-me`).
 
 | Option | |
 |---|---|
-| `--what=TEXT` | What to look for (default: cafés). Pubs, bars, cafés, restaurants and parks, plus words like "with a garden" or "vegan" |
+| `--what=TEXT` | What to look for (default: cafés), e.g. pubs, tapas, ramen, "pubs with a garden" |
 | `--count=N` | Places to suggest, 2–10 (default: 5) |
 | `--radius=M` | Search circle in metres, 100–5000 (default: 1000). Widens automatically if too few places are found |
 | `--country=CC` | Look up starting places in one country (e.g. `gb`) |
@@ -108,32 +108,28 @@ Starting places can be towns, stations, postcodes, or `"lat,lng"`. Up to 8
 | `--preview` | Show the places without creating a poll |
 | `--open` | Open the poll in your browser as its organiser (uses the one-time manage link) |
 | `--json` | Print the raw JSON response |
-| `--source=WHERE` | `apple`, `chattymaps` or `auto` (default: `apple` on a Mac, otherwise `chattymaps`) |
 | `--url=URL` | ChattyMaps server (default: `$CHATTYMAPS_URL`, then the public site) |
 
 Point it at a local ChattyMaps with
 `--url=http://localhost:4480` or `export CHATTYMAPS_URL=http://localhost:4480`.
 
-## On a Mac, Apple Maps does the lookups
+## All lookups run locally through Apple Maps
 
-On macOS, `middle` takes the same approach as George Mandis's
+`middle` takes the same approach as George Mandis's
 [`nearme`](https://less.software/nearme/) and
 [`whereami`](https://less.software/whereami/): it calls Apple's MapKit and
 CoreLocation directly, through a small Swift helper (`src/mapkit-helper.swift`).
-Geocoding, place search and naming the middle all happen on your machine. That
+Geocoding, place search and naming the middle all happen on your Mac. That
 means:
 
-- No API keys, no accounts, and no OpenStreetMap servers.
+- No API keys, no accounts, and no server-side geocoding on ChattyMaps.
 - **Your starting places never leave your Mac.** ChattyMaps receives only the
-  midpoint and the chosen places.
+  midpoint, its area/country, and the chosen places.
 - `--preview` doesn't contact ChattyMaps at all.
 
 The helper is compiled on first use with Apple's Command Line Tools
 (`xcode-select --install` if you don't have them). That takes about 15
 seconds, and the result is cached in `~/Library/Caches/chattymaps-middle/`.
-
-Elsewhere, or with `--source=chattymaps`, ChattyMaps does the lookups with
-OpenStreetMap data.
 
 ## Managing the poll
 
@@ -158,24 +154,20 @@ lets the group fix it.
 
 ## How it works
 
-With Apple Maps, the CLI geocodes the starting places, averages them, names
-the middle, and searches near it, widening from 1 km to 2 km and then 4 km if
-too few places turn up. It then sends `POST /api/middle` with the midpoint and
-the places, and ChattyMaps creates an unlisted poll.
-
-With `--source=chattymaps`, the CLI sends the starting places instead, and
-ChattyMaps does the same steps with OpenStreetMap data. It uses them only for
-that request and doesn't store them.
+The CLI geocodes the starting places locally with Apple Maps, averages them,
+names the middle, and searches near it, widening from 1 km to 2 km and then
+4 km if too few places turn up. It then sends `POST /api/middle` with only the
+midpoint, area and chosen places, and ChattyMaps creates an unlisted poll
+without performing any location lookups of its own.
 
 The API contract is in the ChattyMaps repo, in `docs/MIDDLE_API.md`.
 
 ## Limits
 
+- macOS only (uses MapKit and CoreLocation).
 - Apple's search reads what you type as free text ("tapas", "ramen" and so on)
   but treats extra words like "with a garden" as a hint, not a filter.
 - The middle is a straight line, not travel time.
-- `middle-with-me` reads your current location via macOS CoreLocation only.
-  Elsewhere, use `middle` and pass your coordinates as `"lat,lng"`.
 
 ## Credit
 

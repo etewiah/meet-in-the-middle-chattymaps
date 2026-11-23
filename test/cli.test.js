@@ -30,6 +30,7 @@ test('usage errors', () => {
   assert.throws(() => parseCli(['Only one'], env), UsageError);
   assert.throws(() => parseCli(['A', 'B', '--count=lots'], env), UsageError);
   assert.throws(() => parseCli(['A', 'B', '--days=200'], env), UsageError);
+  assert.throws(() => parseCli(['A', 'B', '--source=chattymaps'], env));
 });
 
 test('distances', () => {
@@ -40,7 +41,7 @@ test('distances', () => {
 });
 
 const response = {
-  id: 'abc', url: 'https://chattymaps.test/poll/abc', preview: false,
+  id: 'abc', url: 'https://chattymaps.test/poll/abc', preview: false, source: 'apple',
   what: { query: 'pubs', label: 'Pubs', unchecked: [] },
   midpoint: { lat: 51.52286, lng: -0.0792, label: 'Hoxton', regionLabel: 'London' },
   radiusM: 1000, spreadM: 15_300, note: 'Straight-line middle, not travel time.',
@@ -62,41 +63,6 @@ function io(fetchImpl, apple = noApple) {
   return { out: { write: (s) => out.push(s) }, err: { write: (s) => err.push(s) }, env, fetch: fetchImpl, apple, output: out, errors: err };
 }
 
-test('main posts to /api/middle and prints the result', async () => {
-  let seen;
-  const streams = io(async (url, init) => { seen = { url, body: JSON.parse(init.body) }; return Response.json(response, { status: 201 }); });
-  const code = await main(['Clapham', 'Walthamstow', 'pubs', '--url=http://localhost:4480'], streams);
-  assert.equal(code, 0);
-  assert.equal(seen.url, 'http://localhost:4480/api/middle');
-  assert.deepEqual(seen.body, { from: ['Clapham', 'Walthamstow'], what: 'pubs' });
-  assert.match(streams.output.join(''), /Vote here/);
-});
-
-test('main explains API errors and hints when the last word was probably a place', async () => {
-  const streams = io(async () => Response.json({ error: 'ChattyMaps doesn\'t know "Brixton" as a kind of place yet.', code: 'UNKNOWN_PLACE_KIND' }, { status: 422 }));
-  const code = await main(['Clapham', 'Walthamstow', 'Brixton'], streams);
-  assert.equal(code, 1);
-  assert.match(streams.errors.join(''), /If "Brixton" is a starting place, add --what=/);
-});
-
-test('main reports a server without the endpoint', async () => {
-  const streams = io(async () => new Response('Not found', { status: 404 }));
-  assert.equal(await main(['A', 'B'], streams), 1);
-  assert.match(streams.errors.join(''), /doesn't have \/api\/middle/);
-});
-
-test('when the places service is down, it still shows the middle without claiming nothing was found', async () => {
-  const streams = io(async () => Response.json({
-    error: "The places service didn't answer, so no venues could be suggested.", code: 'PLACES_UNAVAILABLE',
-    midpoint: response.midpoint, spreadM: 15_300, startingPoints: response.startingPoints, radiusM: 1000, candidates: [],
-  }, { status: 502 }));
-  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs'], streams), 1);
-  const text = streams.errors.join('');
-  assert.match(text, /places service didn't answer/);
-  assert.match(text, /Middle: Hoxton, London/);
-  assert.doesNotMatch(text, /No pubs found|searched within/);
-});
-
 // A fake Apple Maps: Clapham and Walthamstow, a midpoint in Hoxton, three pubs.
 function fakeApple(places) {
   const calls = [];
@@ -110,7 +76,7 @@ function fakeApple(places) {
 }
 const nearMiddle = (name, dLat, extra = {}) => ({ name, lat: 51.52285 + dLat, lng: -0.0792, ...extra });
 
-test('on a Mac, --preview finds everything with Apple Maps and never contacts ChattyMaps', async () => {
+test('--preview finds everything locally with Apple Maps and never contacts ChattyMaps', async () => {
   const { calls, apple } = fakeApple([nearMiddle('Far', 0.05), nearMiddle('The Wenlock', 0.002, { phone: '+44 20', url: 'https://wenlock.test' }), nearMiddle('The Eagle', 0.001)]);
   const streams = io(async () => { throw new Error('ChattyMaps should not be called'); }, apple);
   assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--preview', '--count=2'], streams), 0);
@@ -122,20 +88,28 @@ test('on a Mac, --preview finds everything with Apple Maps and never contacts Ch
   assert.deepEqual(calls.filter(([c]) => c === 'search'), [['search', 'pubs', 1000]]);
 });
 
-test('on a Mac, creating a poll sends only the midpoint and places, never the starting places', async () => {
+test('creating a poll sends only the midpoint, area and places, never the starting places', async () => {
   const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
-  let sent;
-  const streams = io(async (url, init) => { sent = JSON.parse(init.body); return Response.json({ id: 'p1', url: 'https://chattymaps.test/poll/p1' }, { status: 201 }); }, apple);
-  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2', '--name=Sam'], streams), 0);
-  assert.deepEqual(Object.keys(sent).sort(), ['area', 'midpoint', 'nickname', 'places', 'radiusM', 'source', 'what']);
-  assert.deepEqual(sent.area, { label: 'Hoxton', regionLabel: 'London', countryCode: 'gb' });
-  assert.equal(sent.source, 'apple_maps');
-  assert.deepEqual(sent.places.map((p) => p.name), ['The Eagle', 'The Wenlock']);
-  assert.doesNotMatch(JSON.stringify(sent), /Clapham|Walthamstow|51\.4618/);
+  let seen;
+  const streams = io(async (url, init) => { seen = { url, body: JSON.parse(init.body) }; return Response.json({ id: 'p1', url: 'https://chattymaps.test/poll/p1' }, { status: 201 }); }, apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--count=2', '--name=Sam', '--url=http://localhost:4480'], streams), 0);
+  assert.equal(seen.url, 'http://localhost:4480/api/middle');
+  assert.deepEqual(Object.keys(seen.body).sort(), ['area', 'midpoint', 'nickname', 'places', 'radiusM', 'source', 'what']);
+  assert.deepEqual(seen.body.area, { label: 'Hoxton', regionLabel: 'London', countryCode: 'gb' });
+  assert.equal(seen.body.source, 'apple_maps');
+  assert.deepEqual(seen.body.places.map((p) => p.name), ['The Eagle', 'The Wenlock']);
+  assert.doesNotMatch(JSON.stringify(seen.body), /Clapham|Walthamstow|51\.4618/);
   assert.match(streams.output.join(''), /Vote here: https:\/\/chattymaps\.test\/poll\/p1/);
 });
 
-test('on a Mac, it widens the search when too few places are close, and refuses a one-place poll', async () => {
+test('main reports a server without the endpoint', async () => {
+  const { apple } = fakeApple([nearMiddle('The Wenlock', 0.002), nearMiddle('The Eagle', 0.001)]);
+  const streams = io(async () => new Response('Not found', { status: 404 }), apple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs'], streams), 1);
+  assert.match(streams.errors.join(''), /doesn't have \/api\/middle/);
+});
+
+test('widens the search when too few places are close, and refuses a one-place poll', async () => {
   const { calls, apple } = fakeApple([nearMiddle('Only one', 0.001)]);
   const streams = io(async () => { throw new Error('should not post'); }, apple);
   assert.equal(await main(['Clapham', 'Walthamstow', 'pubs'], streams), 1);
@@ -143,19 +117,17 @@ test('on a Mac, it widens the search when too few places are close, and refuses 
   assert.match(streams.errors.join(''), /Apple Maps found only one within 4 km/);
 });
 
-test('on a Mac, an unknown starting place is named', async () => {
+test('an unknown starting place is named', async () => {
   const { apple } = fakeApple([]);
   const streams = io(async () => { throw new Error('should not post'); }, apple);
   assert.equal(await main(['Clapham', 'Atlantis', 'pubs'], streams), 1);
   assert.match(streams.errors.join(''), /starting place 2, "Atlantis"/);
 });
 
-test('--source=chattymaps skips Apple Maps', async () => {
-  const { apple } = fakeApple([]);
-  let posted;
-  const streams = io(async (url, init) => { posted = JSON.parse(init.body); return Response.json(response, { status: 201 }); }, apple);
-  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs', '--source=chattymaps'], streams), 0);
-  assert.deepEqual(posted.from, ['Clapham', 'Walthamstow']);
+test('refuses to run without macOS / Apple Maps and never contacts ChattyMaps', async () => {
+  const streams = io(async () => { throw new Error('ChattyMaps must not be contacted'); }, noApple);
+  assert.equal(await main(['Clapham', 'Walthamstow', 'pubs'], streams), 1);
+  assert.match(streams.errors.join(''), /macOS.*Apple Maps/);
 });
 
 test('middle-with-me positional parsing', () => {
@@ -177,19 +149,10 @@ test('middle-with-me uses current location locally and never sends it to ChattyM
   assert.doesNotMatch(JSON.stringify(sent), /51\.4618|Walthamstow|you/);
 });
 
-test('middle-with-me with --source=chattymaps locates on Mac and sends coordinates', async () => {
-  const { calls, apple } = fakeApple([]);
-  let posted;
-  const streams = io(async (url, init) => { posted = JSON.parse(init.body); return Response.json(response, { status: 201 }); }, apple);
-  assert.equal(await main(['Walthamstow', 'pubs', '--source=chattymaps'], streams, { withMe: true }), 0);
-  assert.deepEqual(calls, [['locate']]);
-  assert.deepEqual(posted.from, ['51.461800,-0.138400', 'Walthamstow']);
-});
-
 test('middle-with-me explains when Apple Maps / CoreLocation is unavailable', async () => {
   const streams = io(async () => { throw new Error('should not post'); }, noApple);
   assert.equal(await main(['Camden', 'pubs'], streams, { withMe: true }), 1);
-  assert.match(streams.errors.join(''), /needs macOS.*lat,lng/);
+  assert.match(streams.errors.join(''), /middle-with-me.*macOS.*Apple Maps/);
 });
 
 test('middle-with-me caps total starting places at 8 including you', async () => {
@@ -205,7 +168,7 @@ test('middle-with-me --help prints middle-with-me usage', async () => {
   assert.match(streams.output.join(''), /^middle-with-me —/);
 });
 
-test('on a Mac, subsequent geocodes pass country and the prior starts midpoint as a region hint', async () => {
+test('subsequent geocodes pass country and the prior starts midpoint as a region hint', async () => {
   const geocodeCalls = [];
   const maps = {
     geocode: async (text, country, near) => {

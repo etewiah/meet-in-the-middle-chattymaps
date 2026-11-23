@@ -7,7 +7,7 @@ export const VERSION = '0.2.0';
 export const DEFAULT_BASE_URL = 'https://chattymaps.etewiah.workers.dev';
 const TIMEOUT_MS = 90_000;
 
-export const USAGE = `middle — find places to meet in the middle, then let the group vote on ChattyMaps
+export const USAGE = `middle — find places to meet in the middle on macOS, then let the group vote on ChattyMaps
 
 Usage:
   middle <place> <place> [more places…] [what] [options]
@@ -21,9 +21,9 @@ Usage:
     middle Clapham Walthamstow Brixton --what=bars
   Starting places can be towns, stations, postcodes or "lat,lng".
 
-On a Mac, the lookups run through Apple Maps on your machine (no keys,
-no accounts), and only the midpoint and the chosen places go to ChattyMaps.
-Elsewhere, ChattyMaps does the lookups with OpenStreetMap.
+All lookups run locally on your Mac through Apple Maps (no keys, no accounts).
+Your starting places never leave your machine — only the midpoint, area and
+chosen places are sent to ChattyMaps to create the poll.
 
 Options:
   --what=TEXT        What to look for (default: cafés), e.g. pubs, tapas,
@@ -35,10 +35,8 @@ Options:
   --title=TEXT       Poll title (default: "Where should we meet? …")
   --name=TEXT        Your name on the poll (default: Organiser)
   --days=N           Close voting after N days
-  --preview          Show the places without creating a poll (on a Mac,
-                     this doesn't contact ChattyMaps at all)
-  --source=WHERE     Who finds the places: apple, chattymaps, or auto
-                     (default: apple on a Mac, otherwise chattymaps)
+  --preview          Show the places without creating a poll (doesn't contact
+                     ChattyMaps at all)
   --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
@@ -49,7 +47,7 @@ Options:
 The middle is a straight-line average, not travel time. That's why the
 group gets a vote.`;
 
-export const USAGE_WITH_ME = `middle-with-me — find places to meet halfway from where you are, then vote on ChattyMaps
+export const USAGE_WITH_ME = `middle-with-me — find places to meet halfway from where you are on macOS, then vote on ChattyMaps
 
 Usage:
   middle-with-me <place> [more places…] [what] [options]
@@ -64,9 +62,10 @@ Usage:
   With one, it's the other starting place and it looks for cafés.
   Use --what when every word is a starting place.
 
-Your current location stays on your Mac (with Apple Maps); only the midpoint
-and the chosen places go to ChattyMaps. On first run, macOS will ask to allow
-Location Services for your terminal.
+All lookups run locally on your Mac through Apple Maps and CoreLocation. Your
+current location and starting places never leave your machine — only the
+midpoint, area and chosen places go to ChattyMaps. On first run, macOS will ask
+to allow Location Services for your terminal.
 
 Options:
   --what=TEXT        What to look for (default: cafés), e.g. pubs, tapas,
@@ -80,8 +79,6 @@ Options:
   --days=N           Close voting after N days
   --preview          Show the places without creating a poll (doesn't contact
                      ChattyMaps at all)
-  --source=WHERE     Who finds the places: apple, chattymaps, or auto
-                     (default: apple on a Mac)
   --open             Open the poll as its organiser in your browser
   --json             Print the raw JSON response
   --url=URL          ChattyMaps server (default: $CHATTYMAPS_URL or
@@ -100,7 +97,7 @@ function integer(value, name) {
   return Number(value);
 }
 
-/** Turns argv into the /api/middle request body, plus CLI-only settings. */
+/** Turns argv into local search options plus CLI-only settings. */
 export function parseCli(argv, env = process.env, { withMe = false } = {}) {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -118,7 +115,6 @@ export function parseCli(argv, env = process.env, { withMe = false } = {}) {
       open: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       url: { type: 'string' },
-      source: { type: 'string', default: 'auto' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -151,10 +147,9 @@ export function parseCli(argv, env = process.env, { withMe = false } = {}) {
     ...(days ? { expiresIn: days * 86_400 } : {}),
     ...(values.preview ? { preview: true } : {}),
   };
-  if (!['auto', 'apple', 'chattymaps'].includes(values.source)) throw new UsageError('--source must be apple, chattymaps or auto');
   const baseUrl = (values.url ?? env.CHATTYMAPS_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
   try { new URL(baseUrl); } catch { throw new UsageError(`--url is not a valid URL: ${baseUrl}`); }
-  return { body, baseUrl, json: values.json, open: values.open, whatFromPosition, source: values.source, withMe };
+  return { body, baseUrl, json: values.json, open: values.open, whatFromPosition, withMe };
 }
 
 export class ApiError extends Error {
@@ -204,13 +199,11 @@ export function formatResult(data) {
   const where = [middle.label, middle.regionLabel].filter(Boolean).join(', ');
   lines.push(`Middle: ${where} (${middle.lat.toFixed(4)}, ${middle.lng.toFixed(4)})`);
   const starts = data.startingPoints ?? [];
-  const searched = data.code === 'PLACES_UNAVAILABLE' ? '' : ` · searched within ${formatDistance(data.radiusM)}`;
-  lines.push(`${starts.length} starting places, up to ${formatDistance(data.spreadM)} apart${searched}`);
+  lines.push(`${starts.length} starting places, up to ${formatDistance(data.spreadM)} apart · searched within ${formatDistance(data.radiusM)}`);
   lines.push(`${data.note ?? 'Straight-line middle, not travel time.'}${data.source === 'apple' ? ' Places from Apple Maps.' : ''}`);
-  if (data.what?.unchecked?.length) lines.push(`Not checked: ${data.what.unchecked.join(', ')}`);
   lines.push('');
 
-  if (!data.candidates?.length && data.code !== 'PLACES_UNAVAILABLE') lines.push(`No ${String(data.what?.label ?? 'places').toLowerCase()} found near the middle.`, '');
+  if (!data.candidates?.length) lines.push(`No ${String(data.what?.label ?? 'places').toLowerCase()} found near the middle.`, '');
   data.candidates?.forEach((place, index) => {
     lines.push(`${index + 1}. ${place.name}${place.kind ? ` (${place.kind})` : ''}`);
     if (place.address) lines.push(`   ${place.address}`);
@@ -226,40 +219,26 @@ export function formatResult(data) {
     lines.push('', `Manage it: ${data.manageUrl}`);
     lines.push('  Keep this link to yourself. The first browser to open it becomes the organiser');
     lines.push('  (edit, close, decide), and then the link stops working. Unused, it expires in 30 days.');
-  }
-  else if (data.preview) lines.push('Preview only: no poll was created. Run again without --preview to create one.');
+  } else if (data.preview) lines.push('Preview only: no poll was created. Run again without --preview to create one.');
   return lines.join('\n');
 }
 
 function openInBrowser(url) {
-  const [command, args] = process.platform === 'darwin' ? ['open', [url]]
-    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
-      : ['xdg-open', [url]];
-  spawn(command, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
+  spawn('open', [url], { stdio: 'ignore', detached: true }).on('error', () => {}).unref();
 }
 
 const DEFAULT_APPLE = { available: () => appleMapsAvailable(), open: (options) => appleMaps(options) };
 
-/** Apple Maps client for this run, or null to let ChattyMaps do the lookups. */
-async function chooseAppleMaps(options, io, { required = false } = {}) {
-  if (!required && options.source === 'chattymaps') return null;
+/** Apple Maps client for this run; always local on macOS, never falls back to ChattyMaps. */
+async function openAppleMaps(io, { withMe = false } = {}) {
   const apple = io.apple ?? DEFAULT_APPLE;
   if (!(await apple.available())) {
-    if (required) {
-      throw new AppleMapsError(
-        'middle-with-me needs macOS with the Command Line Tools (xcode-select --install) to read your current location. Elsewhere, use \'middle\' with your coordinates as "lat,lng".',
-      );
-    }
-    if (options.source === 'apple') throw new AppleMapsError('Apple Maps needs macOS with the Command Line Tools (xcode-select --install).');
-    return null;
+    const command = withMe ? 'middle-with-me' : 'middle';
+    throw new AppleMapsError(
+      `${command} runs locally on macOS using Apple Maps and needs the Command Line Tools (xcode-select --install).`,
+    );
   }
-  try {
-    return await apple.open({ env: io.env, log: (line) => io.err.write(`${line}\n`) });
-  } catch (error) {
-    if (required || options.source === 'apple' || !(error instanceof AppleMapsError)) throw error;
-    io.err.write(`${error.message}\nUsing ChattyMaps to find places instead.\n`);
-    return null;
-  }
+  return apple.open({ env: io.env, log: (line) => io.err.write(`${line}\n`) });
 }
 
 async function findWithApple(options, maps, io, me = null) {
@@ -268,6 +247,11 @@ async function findWithApple(options, maps, io, me = null) {
   if (local.candidates.length < 2)
     throw new LocalSearchError(
       `A poll needs at least two places, and Apple Maps found ${local.candidates.length === 0 ? 'none' : 'only one'} within ${formatDistance(local.radiusM)} of the middle. Try something else with --what, or a bigger --radius.`,
+      local,
+    );
+  if (!local.area)
+    throw new LocalSearchError(
+      "Couldn't tell which country the middle is in, so the poll can't be set up.",
       local,
     );
   const created = await requestMiddle(options.baseUrl, placesRequest(local, options.body), io.fetch);
@@ -288,40 +272,25 @@ export async function main(argv = process.argv.slice(2), io = { out: process.std
   if (options.version) { streams.out.write(`${VERSION}\n`); return 0; }
 
   try {
-    const maps = await chooseAppleMaps(options, streams, { required: withMe });
-    let data;
+    const maps = await openAppleMaps(streams, { withMe });
+    let me = null;
     if (withMe) {
       const located = await maps.locate();
-      const me = { name: 'you', lat: located.lat, lng: located.lng };
-      if (options.source === 'chattymaps') {
-        const body = { ...options.body, from: [`${me.lat.toFixed(6)},${me.lng.toFixed(6)}`, ...options.body.from] };
-        data = await requestMiddle(options.baseUrl, body, streams.fetch);
-      } else {
-        data = await findWithApple(options, maps, streams, me);
-      }
-    } else {
-      data = maps ? await findWithApple(options, maps, streams) : await requestMiddle(options.baseUrl, options.body, streams.fetch);
+      me = { name: 'you', lat: located.lat, lng: located.lng };
     }
+    const data = await findWithApple(options, maps, streams, me);
     streams.out.write(options.json ? `${JSON.stringify(data, null, 2)}\n` : `${formatResult(data)}\n`);
     // Whoever runs the CLI is usually the organiser, so open the manage link.
     if (options.open && (data.manageUrl || data.url)) openInBrowser(data.manageUrl ?? data.url);
     return 0;
   } catch (error) {
-    if (error instanceof AppleMapsError || error instanceof LocalSearchError) {
+    if (error instanceof AppleMapsError || error instanceof LocalSearchError || error instanceof ApiError) {
       if (options.json && error.data) streams.out.write(`${JSON.stringify(error.data, null, 2)}\n`);
       let message = `Error: ${error.message}`;
       if (!options.json && error.data?.midpoint) message += `\n\n${formatResult(error.data)}`;
       streams.err.write(`${message}\n`);
       return 1;
     }
-    if (!(error instanceof ApiError)) throw error;
-    if (options.json && error.data) streams.out.write(`${JSON.stringify(error.data, null, 2)}\n`);
-    let message = `Error: ${error.message}`;
-    if (error.data?.code === 'UNKNOWN_PLACE_KIND' && options.whatFromPosition)
-      message += `\nIf "${options.body.what}" is a starting place, add --what=cafés (or whatever you're looking for).`;
-    // Show what was found, so a "not enough places" answer is still useful.
-    if (!options.json && error.data?.midpoint) message += `\n\n${formatResult(error.data)}`;
-    streams.err.write(`${message}\n`);
-    return 1;
+    throw error;
   }
 }

@@ -19,13 +19,13 @@ test('package.json version matches CLI VERSION', () => {
   assert.equal(VERSION, pkg.version);
 });
 
-test('parseCli validates --source, --url, --days, --radius and --country', () => {
+test('parseCli validates --url, --days, --radius and --country and rejects removed --source', () => {
   const parsed = parseCli(['Richmond', 'Kingston', 'cafés', '--country=gb', '--radius=2000', '--title=Coffee', '--json', '--open'], {});
   assert.deepEqual(parsed.body, { from: ['Richmond', 'Kingston'], what: 'cafés', country: 'gb', radiusM: 2000, title: 'Coffee' });
   assert.equal(parsed.json, true);
   assert.equal(parsed.open, true);
 
-  assert.throws(() => parseCli(['A', 'B', '--source=google'], {}), UsageError);
+  assert.throws(() => parseCli(['A', 'B', '--source=chattymaps'], {}));
   assert.throws(() => parseCli(['A', 'B', '--url=not-a-url'], {}), UsageError);
   assert.throws(() => parseCli(['A', 'B', '--days=0'], {}), UsageError);
   assert.throws(() => parseCli(['A', 'B', '--days=91'], {}), UsageError);
@@ -68,40 +68,46 @@ test('local.js geometry, radiusSteps, deduplication and validation', async () =>
   assert.equal(req.title, 'Meet');
 });
 
-test('main falls back to ChattyMaps when Apple helper fails under --source=auto, but fails under --source=apple', async () => {
+test('local.js falls back to starting point countryCode when reverse geocode returns null', async () => {
+  const maps = {
+    geocode: async (text) => ({ A: { name: 'A', lat: 51.4, lng: -0.2, countryCode: 'gb' }, B: { name: 'B', lat: 51.6, lng: 0.0, countryCode: 'gb' } }[text]),
+    reverse: async () => null,
+    search: async () => [{ name: 'One', lat: 51.5, lng: -0.1 }, { name: 'Two', lat: 51.501, lng: -0.1 }],
+  };
+  const result = await findMiddleLocally({ from: ['A', 'B'], what: 'pubs' }, maps);
+  assert.deepEqual(result.area, { label: 'the middle', countryCode: 'gb' });
+});
+
+test('main fails cleanly when Apple helper fails or country cannot be determined, never calling ChattyMaps', async () => {
   const brokenApple = {
     available: async () => true,
     open: async () => { throw new AppleMapsError('compiler missing'); },
   };
   const err = [];
-  const out = [];
-  let calledFetch = false;
   const streams = {
-    out: { write: (s) => out.push(s) },
+    out: { write: () => {} },
     err: { write: (s) => err.push(s) },
     env: {},
     apple: brokenApple,
-    fetch: async () => {
-      calledFetch = true;
-      return Response.json({
-        preview: true,
-        what: { query: 'pubs', label: 'Pubs', unchecked: [] },
-        midpoint: { lat: 51.52, lng: -0.08, label: 'Hoxton' },
-        radiusM: 1000,
-        spreadM: 15_000,
-        startingPoints: [{ name: 'A', lat: 51.46, lng: -0.14 }, { name: 'B', lat: 51.58, lng: -0.02 }],
-        candidates: [],
-      });
-    },
+    fetch: async () => { throw new Error('ChattyMaps must not be contacted'); },
   };
+  assert.equal(await main(['A', 'B', 'pubs'], streams), 1);
+  assert.match(err.join(''), /compiler missing/);
 
-  assert.equal(await main(['A', 'B', 'pubs', '--preview'], streams), 0);
-  assert.equal(calledFetch, true);
-  assert.match(err.join(''), /Using ChattyMaps to find places instead/);
-
-  const errStrict = [];
-  assert.equal(await main(['A', 'B', 'pubs', '--source=apple', '--preview'], { ...streams, err: { write: (s) => errStrict.push(s) } }), 1);
-  assert.match(errStrict.join(''), /compiler missing/);
+  const oceanMaps = {
+    geocode: async () => { throw new Error('unused'); },
+    reverse: async () => null,
+    search: async () => [{ name: 'Buoy 1', lat: 0, lng: 0 }, { name: 'Buoy 2', lat: 0.001, lng: 0 }],
+  };
+  const errOcean = [];
+  assert.equal(await main(['0,0', '0.01,0.01', 'pubs'], {
+    out: { write: () => {} },
+    err: { write: (s) => errOcean.push(s) },
+    env: {},
+    apple: { available: async () => true, open: async () => oceanMaps },
+    fetch: async () => { throw new Error('ChattyMaps must not be contacted without country'); },
+  }), 1);
+  assert.match(errOcean.join(''), /which country the middle is in/);
 });
 
 test('appleMaps wrapper serializes arguments and parses JSON responses and errors', async () => {

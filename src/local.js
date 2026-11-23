@@ -101,6 +101,7 @@ export async function findMiddleLocally(body, maps, { me = null } = {}) {
     if (candidates.length >= count) break;
   }
 
+  const countryCode = area?.countryCode ?? starts.find((start) => start.countryCode)?.countryCode;
   return {
     source: 'apple',
     what: { query: what, label: what, unchecked: [] },
@@ -108,7 +109,7 @@ export async function findMiddleLocally(body, maps, { me = null } = {}) {
     radiusM: searched,
     candidates,
     note: 'Straight-line middle, not travel time.',
-    area: area?.countryCode ? { label: located.midpoint.label, ...(area.regionLabel ? { regionLabel: area.regionLabel } : {}), countryCode: area.countryCode } : null,
+    area: countryCode ? { label: located.midpoint.label, ...(area?.regionLabel ? { regionLabel: area.regionLabel } : {}), countryCode } : null,
   };
 }
 
