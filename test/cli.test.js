@@ -37,7 +37,7 @@ test('--what keeps every word as a starting place', () => {
 test('base URL comes from --url, then CHATTYMAPS_URL, then the default', () => {
   assert.equal(parseCli(['A', 'B', '--url=http://localhost:4480/'], env).baseUrl, 'http://localhost:4480');
   assert.equal(parseCli(['A', 'B'], { CHATTYMAPS_URL: 'http://x.test' }).baseUrl, 'http://x.test');
-  assert.match(parseCli(['A', 'B'], env).baseUrl, /^https:\/\//);
+  assert.equal(parseCli(['A', 'B'], env).baseUrl, 'https://chattymaps.com');
 });
 
 test('usage errors', () => {

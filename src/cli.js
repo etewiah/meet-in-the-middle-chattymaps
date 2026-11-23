@@ -14,7 +14,7 @@ import {
 import { findMiddleLocally, LocalSearchError, placesRequest } from './local.js';
 
 export const VERSION = '0.2.0';
-export const DEFAULT_BASE_URL = 'https://chattymaps.etewiah.workers.dev';
+export const DEFAULT_BASE_URL = 'https://chattymaps.com';
 const TIMEOUT_MS = 90_000;
 
 export const USAGE = `middle — find places to meet in the middle on macOS, then let the group vote on ChattyMaps

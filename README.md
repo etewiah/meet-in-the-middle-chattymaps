@@ -1,7 +1,7 @@
 # middle
 
 Find places to meet in the middle on macOS, then let the group vote on
-[ChattyMaps](https://chattymaps.etewiah.workers.dev).
+[ChattyMaps](https://chattymaps.com).
 
 ```bash
 $ middle "Clapham" "Walthamstow" pubs
@@ -16,9 +16,9 @@ Straight-line middle, not travel time. Places from Apple Maps.
 
 2. …
 
-Vote here: https://chattymaps.etewiah.workers.dev/poll/abc123
+Vote here: https://chattymaps.com/poll/abc123
 
-Manage it: https://chattymaps.etewiah.workers.dev/poll/abc123#manage=…
+Manage it: https://chattymaps.com/poll/abc123#manage=…
   Keep this link to yourself. The first browser to open it becomes the organiser
   (edit, close, decide), and then the link stops working. Unused, it expires in 30 days.
 
